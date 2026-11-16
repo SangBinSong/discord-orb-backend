@@ -1,0 +1,17 @@
+services:
+  caddy:
+    environment:
+      ORB_TLS_DIRECTIVE: tls /certs/fullchain.pem /certs/privkey.pem
+    volumes:
+      - type: bind
+        source: ${ORB_TLS_CERT_FILE:?Set ORB_TLS_CERT_FILE to the host certificate path}
+        target: /certs/fullchain.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${ORB_TLS_KEY_FILE:?Set ORB_TLS_KEY_FILE to the host private key path}
+        target: /certs/privkey.pem
+        read_only: true
+        bind:
+          create_host_path: false

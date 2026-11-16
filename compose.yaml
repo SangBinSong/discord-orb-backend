@@ -1,0 +1,23 @@
+services:
+  backend:
+    image: ${ORB_BACKEND_IMAGE:?Set ORB_BACKEND_IMAGE to the backend image}
+    env_file:
+      - path: ./.env.backend
+        required: false
+    environment:
+      ORB_PUBLIC_URL: https://${ORB_DOMAIN:?Set ORB_DOMAIN to the public hostname}
+
+  caddy:
+    image: caddy:2
+    environment:
+      ORB_DOMAIN: ${ORB_DOMAIN:?Set ORB_DOMAIN to the public hostname}
+      ORB_TLS_DIRECTIVE: ""
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+
+volumes:
+  caddy_data:

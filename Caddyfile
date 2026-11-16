@@ -1,0 +1,8 @@
+http://{$ORB_DOMAIN} {
+	redir https://{$ORB_DOMAIN}{uri} 308
+}
+
+https://{$ORB_DOMAIN} {
+	{$ORB_TLS_DIRECTIVE}
+	reverse_proxy backend:8080
+}
