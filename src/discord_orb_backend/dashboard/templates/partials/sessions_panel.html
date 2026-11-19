@@ -1,0 +1,44 @@
+<section id="sessions-panel" class="card">
+  <div class="panel-header">
+    <div>
+      <h2>Active Flutter Sessions</h2>
+      <p class="muted">Only device name, app-generated device ID, and platform are displayed.</p>
+    </div>
+  </div>
+
+  {% if sessions %}
+    <table>
+      <thead>
+        <tr>
+          <th>Device Name</th>
+          <th>Device ID</th>
+          <th>Platform</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for session in sessions %}
+        <tr>
+          <td>{{ session.device_name }}</td>
+          <td><code>{{ session.device_id }}</code></td>
+          <td>{{ session.platform }}</td>
+          <td>
+            <form
+              method="post"
+              action="/dashboard/sessions/{{ session.session_id }}/revoke"
+              hx-post="/dashboard/sessions/{{ session.session_id }}/revoke"
+              hx-target="#sessions-panel"
+              hx-swap="outerHTML"
+            >
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+              <button type="submit" class="btn-danger">Disconnect</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No active Flutter sessions.</p>
+  {% endif %}
+</section>

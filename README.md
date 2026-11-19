@@ -2,15 +2,62 @@
 
 Self-hosted backend and operator dashboard for Discord Orb.
 
-## HTTPS deployment
+## Architecture & Runtime
 
-The Compose configuration publishes Caddy on ports 80 and 443. Caddy redirects HTTP to HTTPS and forwards HTTPS requests to the backend on the Docker network. The backend image must listen on container port 8080 and use `ORB_PUBLIC_URL` to build external URLs and its Discord OAuth callback. This repository currently contains the deployment configuration. It needs a backend image to run the API and web dashboard.
+- **Stack**: Python 3.12 (`uv`), `FastAPI`, `httpx`, `Jinja2` + `HTMX`, and built-in `sqlite3` (WAL mode).
+- **Port**: Container listens on HTTP port `8080` behind the Caddy HTTPS reverse proxy.
+- **Persistence**: Stores single-use OAuth exchange tickets, active Flutter sessions (with rotating refresh token hashes), and the instance-wide bot enabled/disabled flag in `ORB_DB_PATH` (default `/data/orb.db`), mounted on the `orb_data` Docker volume across container recreations.
+- **Unconfigured boot mode**: Starts cleanly with all deployment environment variables unset. `GET /healthz` and `GET /` remain reachable (showing only the names of missing variables, with no input forms or secret values), while `/api/*`, `/auth/*`, and `/dashboard/*` return `503 Setup required` until OAuth settings are provided.
 
-Copy [`.env.example`](.env.example) to `.env`. Set `ORB_DOMAIN` to the public hostname without a scheme or path, and `ORB_BACKEND_IMAGE` to the image to run. Put the backend's Discord credentials in `.env.backend` on the host. Docker Compose 2.24 or later supports leaving `.env.backend` absent while the backend serves its setup screen.
+## Environment Variables
+
+Configure Caddy/Compose settings in `.env` (see [`.env.example`](.env.example)) and backend secrets in an untracked `.env.backend` file on the host.
+
+### `.env` (Docker Compose)
+
+- `ORB_DOMAIN`: Public HTTPS hostname without scheme or path (for example, `orb.example.com`). Compose derives `ORB_PUBLIC_URL=https://${ORB_DOMAIN}` for the backend.
+- `ORB_BACKEND_IMAGE`: Container image to run (for example, `ghcr.io/sangbinsong/discord-orb-backend:<version>` or a locally built tag).
+- `ORB_TLS_CERT_FILE` / `ORB_TLS_KEY_FILE`: Optional host paths to a PEM certificate chain and matching private key when using `compose.cert.yaml`.
+
+### `.env.backend` (Backend Runtime)
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `ORB_DISCORD_CLIENT_ID` | Yes | Discord application OAuth2 client ID |
+| `ORB_DISCORD_CLIENT_SECRET` | Yes | Discord application OAuth2 client secret |
+| `ORB_DISCORD_BOT_TOKEN` | Yes (for previews) | Shared Discord bot token (`Bot <token>`); if omitted, OAuth and `/dashboard` stay reachable while previews return `503` |
+| `ORB_SESSION_SECRET` | Yes | Signing secret for OAuth state, Flutter 15-minute access tokens, and operator cookies |
+| `ORB_OPERATOR_DISCORD_IDS` | Recommended | Comma-separated Discord user IDs allowed to access `/dashboard` (empty denies all users) |
+| `ORB_DB_PATH` | Optional | SQLite database path inside container (default `/data/orb.db` in `compose.yaml`) |
+| `ORB_PUBLIC_URL` | Yes | Public HTTPS base URL (auto-set by `compose.yaml` from `ORB_DOMAIN`) |
+
+Example `.env.backend` (keep real values outside Git):
+
+```sh
+ORB_DISCORD_CLIENT_ID=replace-with-client-id
+ORB_DISCORD_CLIENT_SECRET=replace-with-client-secret
+ORB_DISCORD_BOT_TOKEN=replace-with-bot-token
+ORB_SESSION_SECRET=replace-with-long-random-secret
+ORB_OPERATOR_DISCORD_IDS=123456789012345678
+```
+
+## Discord Developer Portal Setup
+
+1. Create a Discord application and add a Bot user. Invite the bot to participating servers with permission to view intended channels and read message history.
+2. Under **OAuth2 -> Redirects**, register both exact HTTPS callback URLs under `ORB_DOMAIN`:
+   - Flutter client callback: `https://<ORB_DOMAIN>/auth/discord/callback`
+   - Operator dashboard callback: `https://<ORB_DOMAIN>/dashboard/callback`
+3. Keep `ORB_DISCORD_CLIENT_SECRET`, `ORB_DISCORD_BOT_TOKEN`, and `ORB_SESSION_SECRET` only on the host in `.env.backend` (never in Dockerfiles, build args, CI logs, or Git).
+
+## HTTPS Deployment
+
+The Compose configuration publishes Caddy on ports `80` and `443`. Caddy redirects HTTP to HTTPS and forwards HTTPS requests to the backend on the internal Docker network.
+
+Copy [`.env.example`](.env.example) to `.env`, create `.env.backend` on the host (optional if booting in unconfigured setup mode with Docker Compose 2.24+), then start the stack.
 
 ### Automatic certificate
 
-Point the domain's DNS at the host and make ports 80 and 443 reachable. Caddy issues and renews a certificate and keeps it in `caddy_data`.
+Point the domain's DNS at the host and make ports `80` and `443` reachable. Caddy issues and renews a certificate and keeps it in `caddy_data`.
 
 ```sh
 docker compose up -d
@@ -24,4 +71,32 @@ Set `ORB_TLS_CERT_FILE` to the host path of the PEM certificate chain for `ORB_D
 docker compose -f compose.yaml -f compose.cert.yaml up -d
 ```
 
-Register the exact callback URL under the same public HTTPS hostname in the Discord Developer Portal. Use that HTTPS base URL in the Flutter client. [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https) · [Caddy certificate files](https://caddyserver.com/docs/caddyfile/directives/tls)
+### Updating or Rotating Secrets
+
+Update `.env` or `.env.backend` (or bump `ORB_BACKEND_IMAGE`), then recreate the container. Persistent SQLite data in `orb_data` is preserved:
+
+```sh
+docker compose pull
+docker compose up -d
+```
+
+[Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https) · [Caddy certificate files](https://caddyserver.com/docs/caddyfile/directives/tls)
+
+## Operator Dashboard (`/dashboard`)
+
+- Open `https://<ORB_DOMAIN>/dashboard` in a browser and sign in with Discord OAuth. Only Discord user IDs listed in `ORB_OPERATOR_DISCORD_IDS` are admitted (checked on every request; 15-minute fixed HTTP-only cookie session).
+- **Bot & Channel Status**: Lists servers and standard non-NSFW text channels visible to the bot, showing `VIEW_CHANNEL` and `READ_MESSAGE_HISTORY` status (marking channels lacking history permission as `unreadable`).
+- **Bot Preview Toggle**: Disables or enables bot-backed previews instance-wide (`POST /dashboard/bot/toggle` with CSRF protection). When disabled, preview API endpoints return `503` without calling Discord, while `/dashboard` remains accessible. State persists in SQLite across container restarts.
+- **Active Flutter Sessions**: Lists `device_name`, `device_id`, and `platform` for active sessions and supports CSRF-protected per-session force revocation (`POST /dashboard/sessions/{session_id}/revoke`), immediately rejecting both access and refresh tokens.
+
+## Local Development & Verification
+
+```sh
+uv sync
+uv run ruff check
+uv run ruff format --check
+uv run pytest
+python3 scripts/container_smoke_test.py
+```
+
+On pull requests and pushes to `main`, [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs `ruff`, `pytest`, and `scripts/container_smoke_test.py`. Pushing a `v*` tag builds and publishes multi-architecture (`linux/amd64`, `linux/arm64`) images to `ghcr.io/sangbinsong/discord-orb-backend`.

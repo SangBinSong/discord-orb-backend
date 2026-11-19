@@ -6,6 +6,9 @@ services:
         required: false
     environment:
       ORB_PUBLIC_URL: https://${ORB_DOMAIN:?Set ORB_DOMAIN to the public hostname}
+      ORB_DB_PATH: /data/orb.db
+    volumes:
+      - orb_data:/data
 
   caddy:
     image: caddy:2
@@ -21,3 +24,4 @@ services:
 
 volumes:
   caddy_data:
+  orb_data:

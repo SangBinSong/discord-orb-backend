@@ -1,0 +1,87 @@
+<section id="bot-panel" class="card">
+  <div class="panel-header">
+    <div>
+      <h2>Bot Status &amp; Channel Permissions</h2>
+      <p class="muted">
+        Instance state:
+        {% if bot_enabled %}
+          <span class="badge badge-ok">Enabled</span>
+        {% else %}
+          <span class="badge badge-warn">Disabled</span>
+        {% endif %}
+      </p>
+    </div>
+    <form
+      method="post"
+      action="/dashboard/bot/toggle"
+      hx-post="/dashboard/bot/toggle"
+      hx-target="#bot-panel"
+      hx-swap="outerHTML"
+    >
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="enabled" value="{{ 'false' if bot_enabled else 'true' }}" />
+      {% if bot_enabled %}
+        <button type="submit" class="btn-danger">Disable Bot Preview</button>
+      {% else %}
+        <button type="submit" class="btn-primary">Enable Bot Preview</button>
+      {% endif %}
+    </form>
+  </div>
+
+  {% if not bot_enabled %}
+    <div class="banner banner-warn">
+      Bot preview disabled. Live Discord channel checks and message previews are paused until re-enabled.
+    </div>
+  {% elif bot_unavailable %}
+    <div class="banner banner-err">
+      Bot token unavailable. Configure a valid bot token to inspect server channel permissions.
+    </div>
+  {% elif bot_error %}
+    <div class="banner banner-err">
+      {{ bot_error }}
+    </div>
+  {% elif channel_statuses %}
+    <table>
+      <thead>
+        <tr>
+          <th>Server</th>
+          <th>Channel</th>
+          <th>VIEW_CHANNEL</th>
+          <th>READ_MESSAGE_HISTORY</th>
+          <th>Access</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in channel_statuses %}
+        <tr>
+          <td>{{ item.guild_name }}</td>
+          <td>#{{ item.channel_name }}</td>
+          <td>
+            {% if item.can_view %}
+              <span class="badge badge-ok">Granted</span>
+            {% else %}
+              <span class="badge badge-err">Missing</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if item.can_read_history %}
+              <span class="badge badge-ok">Granted</span>
+            {% else %}
+              <span class="badge badge-err">Missing</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if item.unreadable or not item.can_read_history or not item.can_view %}
+              <span class="badge badge-warn">unreadable</span>
+            {% else %}
+              <span class="badge badge-ok">readable</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No eligible text channels found in servers where the bot is installed.</p>
+  {% endif %}
+</section>

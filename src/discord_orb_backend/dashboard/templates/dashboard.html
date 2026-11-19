@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}Discord Orb Operator Dashboard{% endblock %}
+
+{% block content %}
+<header class="topbar">
+  <div>
+    <h1>Discord Orb Operator Dashboard</h1>
+    <p class="muted">Hosting operator session active (fixed 15-minute expiry).</p>
+  </div>
+  <form method="post" action="/dashboard/logout">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <button type="submit" class="btn-secondary">Sign out</button>
+  </form>
+</header>
+
+{% include "partials/bot_panel.html" %}
+{% include "partials/sessions_panel.html" %}
+{% endblock %}

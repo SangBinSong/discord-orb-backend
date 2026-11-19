@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}{{ heading }} - Discord Orb{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h1>{{ heading }}</h1>
+  <p class="muted">{{ message }}</p>
+  {% if show_login %}
+  <p>
+    <a class="btn btn-primary" href="/dashboard/login">Sign in with Discord</a>
+  </p>
+  {% endif %}
+</section>
+{% endblock %}
