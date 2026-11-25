@@ -12,6 +12,7 @@ dependencies = [
     "itsdangerous>=2.2",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    "websockets>=14.0",
 ]
 
 [dependency-groups]

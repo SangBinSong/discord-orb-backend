@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from .api import router as api_router
 from .config import Settings
 from .dashboard import router as dashboard_router
-from .discord import DiscordClient
+from .discord import ChannelEventBroker, DiscordClient, DiscordGatewayClient
 from .storage import Repository
 
 _GUARDED_PREFIXES: tuple[str, ...] = ("/api", "/auth", "/dashboard")
@@ -99,14 +99,19 @@ def create_app(
     *,
     repository: Any = None,
     discord_client: Any = None,
+    event_broker: Any = None,
+    gateway_manager: Any = None,
+    sse_keepalive_interval: float = 15.0,
 ) -> FastAPI:
     """Create and configure the FastAPI application instance."""
     resolved_settings = settings if settings is not None else Settings.from_env()
+    resolved_broker = event_broker if event_broker is not None else ChannelEventBroker()
 
     @asynccontextmanager
     async def lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
         owns_repository = False
         owns_discord_client = False
+        owns_gateway = False
 
         # Skip DB/Discord wiring in unconfigured mode so boot works without /data write access.
         if resolved_settings.oauth_configured:
@@ -121,9 +126,47 @@ def create_app(
                 app_instance.state.discord_client = DiscordClient(settings=resolved_settings)
                 owns_discord_client = True
 
+            active_repo = app_instance.state.repository
+
+            def _is_bot_enabled() -> bool:
+                check = getattr(active_repo, "is_bot_enabled", None)
+                return bool(check()) if callable(check) else True
+
+            if app_instance.state.gateway_manager is None and owns_discord_client:
+                app_instance.state.gateway_manager = DiscordGatewayClient(
+                    settings=resolved_settings,
+                    broker=app_instance.state.event_broker,
+                    is_bot_enabled=_is_bot_enabled,
+                )
+                owns_gateway = True
+
+            active_gateway = app_instance.state.gateway_manager
+            if active_gateway is not None and resolved_settings.bot_configured and _is_bot_enabled():
+                start_fn = getattr(active_gateway, "start", None)
+                if callable(start_fn):
+                    start_result = start_fn()
+                    if inspect.isawaitable(start_result):
+                        await start_result
+
         try:
             yield
         finally:
+            active_broker = getattr(app_instance.state, "event_broker", None)
+            if active_broker is not None and callable(getattr(active_broker, "close_all", None)):
+                active_broker.close_all()
+
+            active_gateway = getattr(app_instance.state, "gateway_manager", None)
+            if active_gateway is not None:
+                stop_fn = getattr(active_gateway, "stop", None)
+                if callable(stop_fn):
+                    stop_result = stop_fn()
+                    if inspect.isawaitable(stop_result):
+                        await stop_result
+                else:
+                    await _close_resource(active_gateway)
+                if owns_gateway:
+                    app_instance.state.gateway_manager = None
+
             if owns_discord_client:
                 await _close_resource(app_instance.state.discord_client)
                 app_instance.state.discord_client = None
@@ -135,6 +178,9 @@ def create_app(
     application.state.settings = resolved_settings
     application.state.repository = repository
     application.state.discord_client = discord_client
+    application.state.event_broker = resolved_broker
+    application.state.gateway_manager = gateway_manager
+    application.state.sse_keepalive_interval = sse_keepalive_interval
 
     @application.middleware("http")
     async def require_oauth_configuration(request: Request, call_next: Any) -> Any:

@@ -2,20 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Header, Request, status
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from ..config import Settings
-from ..dependencies import get_discord_client, get_repository, get_settings
+from ..dependencies import (
+    get_discord_client,
+    get_event_broker,
+    get_repository,
+    get_settings,
+)
 from ..discord import (
     DiscordAccessDeniedError,
     DiscordApiError,
     DiscordBotUnavailableError,
     DiscordRateLimitError,
+    format_sse_frame,
 )
 from .schemas import (
     ChannelItem,
@@ -32,6 +40,12 @@ from .tokens import (
 )
 
 _NO_STORE_HEADERS = {"Cache-Control": "no-store"}
+_SSE_HEADERS = {
+    "Cache-Control": "no-store",
+    "X-Accel-Buffering": "no",
+    "Connection": "keep-alive",
+}
+_DEFAULT_SSE_KEEPALIVE_SECONDS = 15.0
 _MAX_PREVIEW_MESSAGES = 10
 
 router = APIRouter(prefix="/api/v1", tags=["preview"])
@@ -196,10 +210,12 @@ async def list_channels(
         GuildChannelsItem(
             guild_id=guild.id,
             guild_name=guild.name,
+            guild_icon_url=guild.guild_icon_url,
             channels=[
                 ChannelItem(
                     guild_id=guild.id,
                     guild_name=guild.name,
+                    guild_icon_url=guild.guild_icon_url,
                     channel_id=channel.id,
                     channel_name=channel.name,
                 )
@@ -260,6 +276,7 @@ async def get_channel_messages(
             MessageItem(
                 id=msg.id,
                 author_name=msg.author_name,
+                author_avatar_url=msg.author_avatar_url,
                 timestamp=msg.timestamp,
                 content=msg.content,
             )
@@ -270,4 +287,100 @@ async def get_channel_messages(
         status_code=status.HTTP_200_OK,
         content=payload.model_dump(),
         headers=_NO_STORE_HEADERS,
+    )
+
+
+@router.get("/guilds/{guild_id}/channels/{channel_id}/stream")
+async def stream_channel_messages(
+    guild_id: str,
+    channel_id: str,
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    repository: Annotated[Any, Depends(get_repository)],
+    discord_client: Annotated[Any, Depends(get_discord_client)],
+    event_broker: Annotated[Any, Depends(get_event_broker)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> Response:
+    """Verify real-time bot/user access and stream live channel message events via SSE."""
+    claims, auth_error = _authenticate_request(authorization, settings, repository)
+    if auth_error is not None or claims is None:
+        return auth_error  # type: ignore[return-value]
+
+    bot_error = _check_bot_available(settings, repository)
+    if bot_error is not None:
+        return bot_error
+
+    try:
+        await discord_client.verify_channel_access_for_user(
+            guild_id,
+            channel_id,
+            claims.discord_user_id,
+        )
+    except DiscordApiError as exc:
+        return _map_discord_error(exc)
+
+    in_flight_error = _check_in_flight_state(claims, settings, repository)
+    if in_flight_error is not None:
+        return in_flight_error
+
+    keepalive_raw = getattr(
+        request.app.state,
+        "sse_keepalive_interval",
+        _DEFAULT_SSE_KEEPALIVE_SECONDS,
+    )
+    keepalive_seconds = (
+        float(keepalive_raw)
+        if isinstance(keepalive_raw, (int, float)) and keepalive_raw > 0
+        else _DEFAULT_SSE_KEEPALIVE_SECONDS
+    )
+
+    async def _event_generator() -> AsyncIterator[str]:
+        subscription = event_broker.subscribe(
+            guild_id,
+            channel_id,
+            session_id=claims.session_id,
+        )
+        try:
+            if _check_in_flight_state(claims, settings, repository) is not None:
+                return
+
+            yield format_sse_frame(
+                "ready",
+                {"guild_id": guild_id, "channel_id": channel_id},
+            )
+
+            while True:
+                if await request.is_disconnected():
+                    break
+                if _check_in_flight_state(claims, settings, repository) is not None:
+                    break
+
+                try:
+                    event = await asyncio.wait_for(
+                        subscription.get(),
+                        timeout=keepalive_seconds,
+                    )
+                except TimeoutError:
+                    if await request.is_disconnected():
+                        break
+                    if _check_in_flight_state(claims, settings, repository) is not None:
+                        break
+                    yield ": keepalive\n\n"
+                    continue
+
+                if event is None:
+                    break
+
+                # Fail-closed check immediately before emitting any message payload.
+                if _check_in_flight_state(claims, settings, repository) is not None:
+                    break
+
+                yield event.format_sse()
+        finally:
+            subscription.close()
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
     )

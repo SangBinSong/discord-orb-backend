@@ -1,6 +1,22 @@
-"""Discord API client, models, exceptions, and permission helpers."""
+"""Discord API client, Gateway v10 client, in-memory broker, models, and permission helpers."""
 
+from .broker import (
+    ChannelEventBroker,
+    ChannelStreamEvent,
+    ChannelSubscription,
+    format_sse_frame,
+)
 from .client import DiscordClient
+from .gateway import (
+    DEFAULT_GATEWAY_URL,
+    FATAL_CLOSE_CODES,
+    INTENT_GUILD_MESSAGES,
+    INTENT_GUILDS,
+    INTENT_MESSAGE_CONTENT,
+    MINIMAL_GATEWAY_INTENTS,
+    DiscordGatewayClient,
+    normalize_gateway_dispatch,
+)
 from .models import (
     BotChannelStatus,
     DiscordAccessDeniedError,
@@ -11,6 +27,8 @@ from .models import (
     DiscordMessage,
     DiscordRateLimitError,
     DiscordUser,
+    resolve_author_avatar_url,
+    resolve_guild_icon_url,
 )
 from .permissions import (
     READ_MESSAGE_HISTORY,
@@ -23,21 +41,35 @@ from .permissions import (
 )
 
 __all__ = [
+    "DEFAULT_GATEWAY_URL",
+    "FATAL_CLOSE_CODES",
+    "INTENT_GUILDS",
+    "INTENT_GUILD_MESSAGES",
+    "INTENT_MESSAGE_CONTENT",
+    "MINIMAL_GATEWAY_INTENTS",
     "READ_MESSAGE_HISTORY",
     "REQUIRED_PERMISSIONS",
     "VIEW_CHANNEL",
     "BotChannelStatus",
+    "ChannelEventBroker",
+    "ChannelStreamEvent",
+    "ChannelSubscription",
     "DiscordAccessDeniedError",
     "DiscordApiError",
     "DiscordBotUnavailableError",
     "DiscordChannel",
     "DiscordClient",
+    "DiscordGatewayClient",
     "DiscordGuild",
     "DiscordMessage",
     "DiscordRateLimitError",
     "DiscordUser",
+    "format_sse_frame",
     "has_permission",
     "has_read_permissions",
     "is_eligible_text_channel",
+    "normalize_gateway_dispatch",
     "parse_permissions",
+    "resolve_author_avatar_url",
+    "resolve_guild_icon_url",
 ]

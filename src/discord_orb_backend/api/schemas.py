@@ -73,6 +73,7 @@ class ChannelItem(BaseModel):
 
     guild_id: str
     guild_name: str
+    guild_icon_url: str | None = None
     channel_id: str
     channel_name: str
 
@@ -82,6 +83,7 @@ class GuildChannelsItem(BaseModel):
 
     guild_id: str
     guild_name: str
+    guild_icon_url: str | None = None
     channels: list[ChannelItem]
 
 
@@ -96,6 +98,7 @@ class MessageItem(BaseModel):
 
     id: str
     author_name: str
+    author_avatar_url: str | None = None
     timestamp: str
     content: str
 

@@ -19,6 +19,8 @@ from .models import (
     DiscordMessage,
     DiscordRateLimitError,
     DiscordUser,
+    resolve_author_avatar_url,
+    resolve_guild_icon_url,
 )
 from .permissions import (
     READ_MESSAGE_HISTORY,
@@ -85,7 +87,14 @@ def _parse_guilds_payload(payload: Any) -> list[DiscordGuild]:
         name = item.get("name")
         if not guild_id or name is None:
             raise DiscordApiError("Discord guild entry is missing required fields")
-        guilds.append(DiscordGuild(id=str(guild_id), name=str(name)))
+        guild_id_str = str(guild_id)
+        guilds.append(
+            DiscordGuild(
+                id=guild_id_str,
+                name=str(name),
+                guild_icon_url=resolve_guild_icon_url(guild_id_str, item.get("icon")),
+            )
+        )
     return guilds
 
 
@@ -323,11 +332,11 @@ class DiscordClient:
         """Return shared guilds containing only channels readable by both bot and user."""
         bot_user_id = await self.get_bot_user_id()
         bot_guilds = await self.list_bot_guilds()
+        bot_guilds_by_id = {guild.id: guild for guild in bot_guilds}
         if user_guilds is None:
             candidate_guilds = bot_guilds
         else:
-            bot_guild_ids = {guild.id for guild in bot_guilds}
-            candidate_guilds = [guild for guild in user_guilds if guild.id in bot_guild_ids]
+            candidate_guilds = [guild for guild in user_guilds if guild.id in bot_guilds_by_id]
 
         eligible_guilds: list[DiscordGuild] = []
         for guild in candidate_guilds:
@@ -342,10 +351,17 @@ class DiscordClient:
                     continue
                 eligible_channels.append(channel)
 
+            bot_guild = bot_guilds_by_id.get(guild.id)
+            icon_url = (
+                guild.guild_icon_url
+                if guild.guild_icon_url is not None
+                else (bot_guild.guild_icon_url if bot_guild is not None else None)
+            )
             eligible_guilds.append(
                 DiscordGuild(
                     id=guild.id,
                     name=guild.name,
+                    guild_icon_url=icon_url,
                     channels=eligible_channels,
                 )
             )
@@ -376,14 +392,13 @@ class DiscordClient:
                 )
         return statuses
 
-    async def fetch_latest_messages_for_user(
+    async def verify_channel_access_for_user(
         self,
         guild_id: str,
         channel_id: str,
         user_id: str,
-        limit: int = 10,
-    ) -> list[DiscordMessage]:
-        """Verify channel membership, bot permissions, and user permissions, then fetch messages."""
+    ) -> None:
+        """Verify eligible channel membership, bot permissions, and user permissions fail-closed."""
         channels = await self.list_guild_channels(guild_id)
         if not any(channel.id == channel_id for channel in channels):
             raise DiscordAccessDeniedError(
@@ -402,6 +417,16 @@ class DiscordClient:
             raise DiscordAccessDeniedError(
                 f"User {user_id} lacks required read permissions for channel {channel_id}"
             )
+
+    async def fetch_latest_messages_for_user(
+        self,
+        guild_id: str,
+        channel_id: str,
+        user_id: str,
+        limit: int = 10,
+    ) -> list[DiscordMessage]:
+        """Verify channel membership, bot permissions, and user permissions, then fetch messages."""
+        await self.verify_channel_access_for_user(guild_id, channel_id, user_id)
 
         resolved_limit = min(max(limit, 1), _MAX_MESSAGES_LIMIT)
         payload = await self._request_json(
@@ -432,6 +457,7 @@ class DiscordClient:
                 DiscordMessage(
                     id=str(message_id),
                     author_name=str(author_name),
+                    author_avatar_url=resolve_author_avatar_url(item, guild_id=guild_id),
                     timestamp=str(timestamp),
                     content=str(content) if content is not None else "",
                 )

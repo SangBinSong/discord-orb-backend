@@ -40,3 +40,14 @@ def get_discord_client(request: Request) -> Any:
             detail="Discord client unavailable",
         )
     return discord_client
+
+
+def get_event_broker(request: Request) -> Any:
+    """Return the active in-memory channel event broker from application state."""
+    broker = getattr(request.app.state, "event_broker", None)
+    if broker is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Event stream broker unavailable",
+        )
+    return broker
