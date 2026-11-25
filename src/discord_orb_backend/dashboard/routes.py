@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -327,6 +328,9 @@ async def revoke_flutter_session(
 
     await require_csrf_token(request, operator_session, settings)
     repository.revoke_session(session_id)
+    event_broker = getattr(request.app.state, "event_broker", None)
+    if event_broker is not None and callable(getattr(event_broker, "close_session", None)):
+        event_broker.close_session(session_id)
 
     if _is_htmx(request):
         csrf_token = generate_csrf_token(operator_session, settings)
@@ -365,6 +369,18 @@ async def toggle_bot(
 
     target_enabled = explicit if explicit is not None else not bool(repository.is_bot_enabled())
     repository.set_bot_enabled(target_enabled)
+
+    gateway_manager = getattr(request.app.state, "gateway_manager", None)
+    sync_bot_state = getattr(gateway_manager, "sync_bot_state", None)
+    if callable(sync_bot_state):
+        sync_result = sync_bot_state(target_enabled)
+        if inspect.isawaitable(sync_result):
+            await sync_result
+
+    if not target_enabled:
+        event_broker = getattr(request.app.state, "event_broker", None)
+        if event_broker is not None and callable(getattr(event_broker, "close_all", None)):
+            event_broker.close_all()
 
     if _is_htmx(request):
         csrf_token = generate_csrf_token(operator_session, settings)

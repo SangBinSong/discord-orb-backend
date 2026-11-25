@@ -629,10 +629,12 @@ def test_channels_filters_permissions_and_hides_denied_channels_and_guilds(
                 {
                     "guild_id": "g-shared",
                     "guild_name": "Shared Guild",
+                    "guild_icon_url": None,
                     "channels": [
                         {
                             "guild_id": "g-shared",
                             "guild_name": "Shared Guild",
+                            "guild_icon_url": None,
                             "channel_id": "ch-ok",
                             "channel_name": "general",
                         }
@@ -729,6 +731,7 @@ def test_messages_preview_permissions_rate_limit_and_bot_unconfigured(tmp_path: 
         assert body["messages"][0] == {
             "id": "m-0",
             "author_name": "User 0",
+            "author_avatar_url": None,
             "timestamp": "2026-11-19T12:00:00+00:00",
             "content": "body 0",
         }

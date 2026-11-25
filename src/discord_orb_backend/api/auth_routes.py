@@ -10,7 +10,7 @@ from datetime import UTC
 from typing import Annotated, Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Body, Depends, Header, Query, status
+from fastapi import APIRouter, Body, Depends, Header, Query, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from ..config import Settings
@@ -228,7 +228,9 @@ async def discord_callback(
         )
 
     ticket = generate_oauth_ticket()
-    guilds_json = json.dumps([guild.model_dump(mode="json") for guild in guilds])
+    guilds_json = json.dumps(
+        [guild.model_dump(mode="json", exclude={"guild_icon_url"}) for guild in guilds]
+    )
     repository.create_oauth_ticket(
         ticket=ticket,
         discord_user_id=user.id,
@@ -365,6 +367,7 @@ def _find_active_session_id_by_refresh_token(repository: Any, refresh_token: str
 
 @router.post("/api/v1/auth/logout", response_model=AuthLogoutResponse)
 async def logout(
+    request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
     repository: Annotated[Any, Depends(get_repository)],
     authorization: Annotated[str | None, Header()] = None,
@@ -396,6 +399,9 @@ async def logout(
         )
 
     repository.revoke_session(target_session_id)
+    event_broker = getattr(request.app.state, "event_broker", None)
+    if event_broker is not None and callable(getattr(event_broker, "close_session", None)):
+        event_broker.close_session(target_session_id)
     return JSONResponse(
         status_code=status.HTTP_200_OK,
         content=AuthLogoutResponse(revoked=True).model_dump(),

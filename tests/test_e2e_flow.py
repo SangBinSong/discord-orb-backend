@@ -275,10 +275,12 @@ def test_full_backend_e2e_flow_and_restart_persistence(tmp_path: Path) -> None:
                 {
                     "guild_id": "g-1",
                     "guild_name": "Orb Guild",
+                    "guild_icon_url": None,
                     "channels": [
                         {
                             "guild_id": "g-1",
                             "guild_name": "Orb Guild",
+                            "guild_icon_url": None,
                             "channel_id": "ch-open",
                             "channel_name": "general",
                         }
