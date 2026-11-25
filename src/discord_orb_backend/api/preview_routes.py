@@ -181,10 +181,8 @@ async def list_channels(
         return bot_error
 
     try:
-        bot_guilds = await discord_client.list_bot_guilds()
         eligible_guilds = await discord_client.list_eligible_channels_for_user(
             claims.discord_user_id,
-            bot_guilds,
         )
     except DiscordApiError as exc:
         return _map_discord_error(exc)

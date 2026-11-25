@@ -469,3 +469,107 @@ async def test_injected_client_is_not_closed_on_aclose() -> None:
     await discord_client.aclose()
     assert injected.is_closed is False
     await injected.aclose()
+
+
+async def test_list_eligible_channels_for_user_without_user_guilds_calls_bot_guilds_once() -> None:
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        seen_paths.append(path)
+        if path == "/api/v10/users/@me":
+            return httpx.Response(200, json={"id": "bot-1", "username": "orb-bot"})
+        if path == "/api/v10/users/@me/guilds":
+            return httpx.Response(
+                200,
+                json=[
+                    {"id": "guild-1", "name": "Shared Guild"},
+                    {"id": "guild-2", "name": "Other Guild"},
+                ],
+            )
+        if path == "/api/v10/guilds/guild-1/channels":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": "ch-ok",
+                        "guild_id": "guild-1",
+                        "name": "general",
+                        "type": 0,
+                        "nsfw": False,
+                    },
+                    {
+                        "id": "ch-denied",
+                        "guild_id": "guild-1",
+                        "name": "mods",
+                        "type": 0,
+                        "nsfw": False,
+                    },
+                ],
+            )
+        if path == "/api/v10/guilds/guild-2/channels":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": "ch-other",
+                        "guild_id": "guild-2",
+                        "name": "private",
+                        "type": 0,
+                        "nsfw": False,
+                    }
+                ],
+            )
+        if path == "/api/v10/channels/ch-ok/permissions/member/bot-1":
+            return httpx.Response(200, json={"permissions": str(REQUIRED_PERMISSIONS)})
+        if path == "/api/v10/channels/ch-ok/permissions/member/user-1":
+            return httpx.Response(200, json={"permissions": str(REQUIRED_PERMISSIONS)})
+        if path == "/api/v10/channels/ch-denied/permissions/member/bot-1":
+            return httpx.Response(200, json={"permissions": str(REQUIRED_PERMISSIONS)})
+        if path == "/api/v10/channels/ch-denied/permissions/member/user-1":
+            return httpx.Response(200, json={"permissions": str(VIEW_CHANNEL)})
+        if path == "/api/v10/channels/ch-other/permissions/member/bot-1":
+            return httpx.Response(200, json={"permissions": str(REQUIRED_PERMISSIONS)})
+        if path == "/api/v10/channels/ch-other/permissions/member/user-1":
+            return httpx.Response(404, json={"message": "Unknown Member"})
+        return httpx.Response(404)
+
+    async with DiscordClient(_make_settings(), transport=_mock_transport(handler)) as client:
+        result = await client.list_eligible_channels_for_user("user-1")
+
+    assert seen_paths.count("/api/v10/users/@me/guilds") == 1
+    assert [(guild.id, [ch.id for ch in guild.channels]) for guild in result] == [
+        ("guild-1", ["ch-ok"]),
+        ("guild-2", []),
+    ]
+
+
+async def test_get_bot_user_id_caches_per_token_and_refetches_on_change() -> None:
+    me_calls: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v10/users/@me":
+            auth = request.headers.get("Authorization")
+            me_calls.append(auth)
+            if auth == "Bot token-a":
+                return httpx.Response(200, json={"id": "bot-a", "username": "orb-bot-a"})
+            if auth == "Bot token-b":
+                return httpx.Response(200, json={"id": "bot-b", "username": "orb-bot-b"})
+            return httpx.Response(401, json={"message": "Unauthorized"})
+        return httpx.Response(404)
+
+    settings = _make_settings(bot_token="token-a")
+    async with DiscordClient(settings, transport=_mock_transport(handler)) as client:
+        assert await client.get_bot_user_id() == "bot-a"
+        assert await client.get_bot_user_id() == "bot-a"
+        assert me_calls == ["Bot token-a"]
+
+        settings.orb_discord_bot_token = "token-b"
+        assert await client.get_bot_user_id() == "bot-b"
+        assert await client.get_bot_user_id() == "bot-b"
+        assert me_calls == ["Bot token-a", "Bot token-b"]
+
+        settings.orb_discord_bot_token = ""
+        with pytest.raises(DiscordBotUnavailableError):
+            await client.get_bot_user_id()
+        assert me_calls == ["Bot token-a", "Bot token-b"]
