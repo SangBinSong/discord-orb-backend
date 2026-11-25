@@ -1,0 +1,16 @@
+services:
+  backend:
+    image: ${ORB_BACKEND_IMAGE:?Set ORB_BACKEND_IMAGE to the backend image}
+    env_file:
+      - path: ./.env.backend
+        required: false
+    environment:
+      ORB_PUBLIC_URL: https://${ORB_DOMAIN:?Set ORB_DOMAIN to the public hostname}
+      ORB_DB_PATH: /data/orb.db
+    ports:
+      - "${ORB_BIND_HOST:-127.0.0.1}:${ORB_BIND_PORT:-8080}:8080"
+    volumes:
+      - orb_data:/data
+
+volumes:
+  orb_data:
