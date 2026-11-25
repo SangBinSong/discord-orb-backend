@@ -841,3 +841,32 @@ def test_messages_discards_payload_on_in_flight_revocation_or_bot_disable(
         ]
 
     repo.close()
+
+
+def test_channels_calls_bot_guilds_only_once_per_request(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    repo = OrbRepository(settings.orb_db_path)
+    calls_log: list[str] = []
+    discord_client = DiscordClient(
+        settings,
+        transport=_build_discord_mock(calls_log=calls_log),
+    )
+    app = create_app(settings, repository=repo, discord_client=discord_client)
+
+    with TestClient(app) as client:
+        tokens = _complete_oauth_login(client)
+        headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+        calls_log.clear()
+        resp_1 = client.get("/api/v1/channels", headers=headers)
+        assert resp_1.status_code == 200
+        assert calls_log.count("GET /api/v10/users/@me/guilds") == 1
+        assert calls_log.count("GET /api/v10/users/@me") == 1
+
+        calls_log.clear()
+        resp_2 = client.get("/api/v1/channels", headers=headers)
+        assert resp_2.status_code == 200
+        assert calls_log.count("GET /api/v10/users/@me/guilds") == 1
+        assert calls_log.count("GET /api/v10/users/@me") == 0
+
+    repo.close()

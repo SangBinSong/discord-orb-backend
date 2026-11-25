@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 from typing import Any, Self
 
@@ -100,6 +101,7 @@ class DiscordClient:
         base_url: str = DISCORD_API_BASE_URL,
     ) -> None:
         self._settings = settings
+        self._cached_bot_user: tuple[bytes, str] | None = None
         if client is not None:
             self._client = client
             self._owns_client = False
@@ -229,14 +231,22 @@ class DiscordClient:
         return user, _parse_guilds_payload(guilds_payload)
 
     async def get_bot_user_id(self) -> str:
-        """Return the authenticated bot's Discord user ID."""
+        """Return the authenticated bot's Discord user ID, cached per bot token."""
+        token = self._require_bot_token()
+        token_key = hashlib.sha256(token.encode("utf-8")).digest()
+        if self._cached_bot_user is not None and self._cached_bot_user[0] == token_key:
+            return self._cached_bot_user[1]
+
+        self._cached_bot_user = None
         payload = await self._request_json(
             "GET",
             "/users/@me",
-            headers=self._bot_headers(),
+            headers={"Authorization": f"Bot {token}"},
             bot_auth=True,
         )
-        return _parse_user_payload(payload).id
+        bot_user_id = _parse_user_payload(payload).id
+        self._cached_bot_user = (token_key, bot_user_id)
+        return bot_user_id
 
     async def list_bot_guilds(self) -> list[DiscordGuild]:
         """Return the guilds the bot currently belongs to."""
@@ -308,19 +318,20 @@ class DiscordClient:
     async def list_eligible_channels_for_user(
         self,
         user_id: str,
-        user_guilds: list[DiscordGuild],
+        user_guilds: list[DiscordGuild] | None = None,
     ) -> list[DiscordGuild]:
         """Return shared guilds containing only channels readable by both bot and user."""
         bot_user_id = await self.get_bot_user_id()
         bot_guilds = await self.list_bot_guilds()
-        bot_guild_ids = {guild.id for guild in bot_guilds}
+        if user_guilds is None:
+            candidate_guilds = bot_guilds
+        else:
+            bot_guild_ids = {guild.id for guild in bot_guilds}
+            candidate_guilds = [guild for guild in user_guilds if guild.id in bot_guild_ids]
 
         eligible_guilds: list[DiscordGuild] = []
-        for user_guild in user_guilds:
-            if user_guild.id not in bot_guild_ids:
-                continue
-
-            channels = await self.list_guild_channels(user_guild.id)
+        for guild in candidate_guilds:
+            channels = await self.list_guild_channels(guild.id)
             eligible_channels: list[DiscordChannel] = []
             for channel in channels:
                 bot_perms = await self.get_member_permissions(channel.id, bot_user_id)
@@ -333,8 +344,8 @@ class DiscordClient:
 
             eligible_guilds.append(
                 DiscordGuild(
-                    id=user_guild.id,
-                    name=user_guild.name,
+                    id=guild.id,
+                    name=guild.name,
                     channels=eligible_channels,
                 )
             )
